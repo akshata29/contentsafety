@@ -74,7 +74,7 @@ function BarChartSVG({ data, maxVal }) {
   )
 }
 
-function TimelineSVG({ data }) {
+function TimelineSVG({ data, labelStep = 2 }) {
   const w = 500
   const h = 100
   const padL = 10
@@ -85,7 +85,7 @@ function TimelineSVG({ data }) {
   const innerH = h - padT - padB
   const max = Math.max(...data.map(d => d.blocks), 1)
   const pts = data.map((d, i) => {
-    const x = padL + (i / (data.length - 1)) * innerW
+    const x = data.length > 1 ? padL + (i / (data.length - 1)) * innerW : padL + innerW / 2
     const y = padT + innerH - (d.blocks / max) * innerH
     return { x, y, ...d }
   })
@@ -105,7 +105,7 @@ function TimelineSVG({ data }) {
       {pts.map((p, i) => (
         <g key={i}>
           <circle cx={p.x} cy={p.y} r={3} fill="#f59e0b" />
-          {i % 2 === 0 && (
+          {i % labelStep === 0 && (
             <text x={p.x} y={h - 4} textAnchor="middle" fontSize="8" fill="var(--text-muted)">{p.hour}</text>
           )}
         </g>
@@ -189,21 +189,33 @@ function EventRow({ ev }) {
   )
 }
 
+const TIME_RANGES = [
+  { key: '1d', label: '1D' },
+  { key: '7d', label: '7D' },
+  { key: '1m', label: '1M' },
+  { key: '3m', label: '3M' },
+  { key: '1y', label: '1Y' },
+]
+
+const LABEL_STEP = { '1d': 2, '7d': 1, '1m': 5, '3m': 2, '1y': 1 }
+
 export default function FilterAnalytics() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [timeRange, setTimeRange] = useState('1d')
 
-  const load = () => {
+  const load = (range) => {
+    const r = range || timeRange
     setLoading(true)
-    apiFetch('/api/content-filters/analytics')
-      .then(r => r.json())
+    apiFetch(`/api/content-filters/analytics?window=${r}`)
+      .then(res => res.json())
       .then(d => { setData(d); setLoading(false) })
       .catch(() => setLoading(false))
   }
 
   useEffect(() => {
-    load()
-  }, [])
+    load(timeRange)
+  }, [timeRange])
 
   if (loading || !data) {
     return (
@@ -213,7 +225,10 @@ export default function FilterAnalytics() {
     )
   }
 
-  const { summary, coverage_matrix, blocks_by_category, blocks_over_time, recent_events } = data
+  const { summary, coverage_matrix, blocks_by_category, blocks_over_time, recent_events, window_label, recent_window_label } = data
+  const wLabel = window_label || '24h'
+  const rLabel = recent_window_label || '2h'
+  const labelStep = LABEL_STEP[timeRange] || 2
 
   const unprotected = coverage_matrix.filter(r => r.guardrail === 'None')
 
@@ -235,6 +250,20 @@ export default function FilterAnalytics() {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.2rem' }}>
+            {TIME_RANGES.map(tr => (
+              <button
+                key={tr.key}
+                onClick={() => setTimeRange(tr.key)}
+                style={{
+                  padding: '0.25rem 0.55rem', borderRadius: 4, fontSize: '0.7rem', fontWeight: 600,
+                  border: 'none', cursor: 'pointer', transition: 'all 0.12s',
+                  background: timeRange === tr.key ? '#f59e0b' : 'transparent',
+                  color: timeRange === tr.key ? '#000' : 'var(--text-muted)',
+                }}
+              >{tr.label}</button>
+            ))}
+          </div>
           {data.data_source === 'live' && (
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem',
               padding: '0.2rem 0.55rem', borderRadius: 4, fontSize: '0.65rem', fontWeight: 700,
@@ -243,7 +272,7 @@ export default function FilterAnalytics() {
               <Activity size={10} /> LIVE DATA
             </span>
           )}
-          <button className="btn-secondary" onClick={load} style={{ fontSize: '0.75rem', padding: '0.3rem 0.7rem' }}>
+          <button className="btn-secondary" onClick={() => load(timeRange)} style={{ fontSize: '0.75rem', padding: '0.3rem 0.7rem' }}>
             <RefreshCw size={12} /> Refresh
           </button>
         </div>
@@ -271,7 +300,7 @@ export default function FilterAnalytics() {
         <StatCard label="Total Guardrails" value={summary.total_guardrails} color="#f59e0b" icon={Shield} />
         <StatCard label="Deployments Covered" value={`${summary.deployments_covered}`} sub="model deployments" color="#3b82f6" icon={Cpu} />
         <StatCard label="Agents Covered" value={`${summary.agents_covered}`} sub="AI agents" color="#8b5cf6" icon={Users} />
-        <StatCard label="Blocks (24h)" value={summary.last_24h_blocked}
+        <StatCard label={`Blocks (${wLabel})`} value={summary.last_24h_blocked}
           sub={summary.last_24h_requests > 0
             ? `${summary.block_rate_pct}% of ${summary.last_24h_requests >= 1000 ? (summary.last_24h_requests / 1000).toFixed(1) + 'k' : summary.last_24h_requests} requests`
             : 'No tests run yet this session'}
@@ -283,7 +312,7 @@ export default function FilterAnalytics() {
         {/* Blocks by category */}
         <div className="card">
           <div className="card-header">
-            <h3>Blocks by Category (24h)</h3>
+            <h3>Blocks by Category ({wLabel})</h3>
             <span className="badge badge-critical">{blocks_by_category.reduce((s, d) => s + d.count, 0)} total</span>
           </div>
           <BarChartSVG data={blocks_by_category} />
@@ -302,21 +331,26 @@ export default function FilterAnalytics() {
         {/* 24h timeline */}
         <div className="card">
           <div className="card-header">
-            <h3>24h Block Timeline</h3>
+            <h3>{wLabel} Block Timeline</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <TrendingUp size={13} style={{ color: '#f59e0b' }} />
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Peak: {Math.max(...blocks_over_time.map(d => d.blocks))} blocks/hr</span>
             </div>
           </div>
-          <TimelineSVG data={blocks_over_time} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.35rem', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-            <span>00:00</span>
-            <span>Trading open</span>
-            <span>Market close</span>
-            <span>23:00</span>
-          </div>
+          <TimelineSVG data={blocks_over_time} labelStep={labelStep} />
+          {timeRange === '1d' && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.35rem', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+              <span>00:00</span>
+              <span>Trading open</span>
+              <span>Market close</span>
+              <span>23:00</span>
+            </div>
+          )}
           <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 4, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-            Peak activity during US market hours (10:00-16:00 ET) consistent with trading session patterns.
+            {timeRange === '1d'
+              ? 'Peak activity during US market hours (10:00-16:00 ET) consistent with trading session patterns.'
+              : `Block events aggregated across ${wLabel}. Run filter tests to populate historical data.`
+            }
           </div>
         </div>
       </div>
@@ -341,14 +375,14 @@ export default function FilterAnalytics() {
           <h3 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Clock size={14} /> Recent Block Events
           </h3>
-          <span className="badge badge-critical">{recent_events.length} in last 2h</span>
+          <span className="badge badge-critical">{recent_events.length} in last {rLabel}</span>
         </div>
         {recent_events.length === 0 ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
             padding: '2rem', color: 'var(--text-muted)', fontSize: '0.8rem',
             flexDirection: 'column', gap: '0.5rem' }}>
             <CheckCircle size={28} style={{ color: '#10b981', opacity: 0.6 }} />
-            <span>No block events in the last 2 hours.</span>
+            <span>No block events in the last {rLabel}.</span>
             <span style={{ fontSize: '0.72rem' }}>Run model or agent filter tests to record real events here.</span>
           </div>
         ) : (

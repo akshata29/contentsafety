@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts'
-import { Bot, Cpu, ShieldCheck, AlertTriangle, DollarSign, Activity, TrendingUp, CheckCircle, XCircle } from 'lucide-react'
+import { Bot, Cpu, ShieldCheck, ShieldAlert, AlertTriangle, Activity, TrendingUp, CheckCircle, XCircle } from 'lucide-react'
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444']
 
@@ -88,7 +88,7 @@ export default function FoundryOverview() {
         <StatCard icon={Cpu} label="Model Deployments" value={data.total_deployments ?? 0} sub={`${data.guardrails_enabled ?? 0} with guardrails`} color="#8b5cf6" />
         <StatCard icon={ShieldCheck} label="Compliance Score" value={`${data.compliance_score ?? 0}%`} sub="Guardrail coverage" color="#10b981" trend={2} />
         <StatCard icon={AlertTriangle} label="Active Alerts" value={data.active_alerts ?? 0} sub={`${data.critical_alerts ?? 0} critical`} color="#f59e0b" trend={-12} />
-        <StatCard icon={DollarSign} label="Daily AI Spend" value={`$${(data.daily_cost ?? 0).toLocaleString()}`} sub="Across all models" color="#ec4899" />
+        <StatCard icon={ShieldAlert} label="Guardrail Blocks (24h)" value={(data.prevented_behaviors ?? 0).toLocaleString()} sub="Content filter blocks" color="#ef4444" />
         <StatCard icon={Activity} label="Requests / hr" value={data.requests_today > 0 ? Math.round(data.requests_today / 24).toLocaleString() : '0'} sub={`${(data.requests_today ?? 0).toLocaleString()} today`} color="#06b6d4" />
       </div>
 

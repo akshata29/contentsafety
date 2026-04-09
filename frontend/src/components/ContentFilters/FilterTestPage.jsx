@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { apiFetch } from '../../lib/apiFetch'
+import { RawJsonView } from '../Common/FeaturePage'
 import {
   Play, RefreshCw, Shield, ShieldOff, CheckCircle, XCircle,
   Bot, Cpu, Zap, AlertTriangle, ChevronDown, ChevronRight,
@@ -31,6 +32,27 @@ const CATEGORY_COLORS = {
 }
 
 const SEV_COLORS = { high: '#ef4444', medium: '#f59e0b', low: '#3b82f6', safe: '#10b981' }
+
+/* Maps each filter page to its dedicated cf-demo-* model deployment */
+const FILTER_DEFAULT_DEPLOYMENT = {
+  jailbreak:          'cf-demo-jailbreak',
+  xpia:               'cf-demo-xpia',
+  content_safety:     'cf-demo-contentsafety',
+  task_adherence:     'cf-demo-taskadherence',
+  pii:                'cf-demo-pii',
+  protected_material: 'cf-demo-protectedmaterial',
+}
+
+/** Return the preferred deployment from a list for a given filterType, or list[0]. */
+function findPreferredDep(depList, filterType) {
+  if (!depList || depList.length === 0) return null
+  const preferred = FILTER_DEFAULT_DEPLOYMENT[filterType]
+  if (preferred) {
+    const found = depList.find(d => d.id === preferred || d.name === preferred)
+    if (found) return found
+  }
+  return depList[0]
+}
 
 /* =========================================================
  * Sub-components
@@ -159,6 +181,7 @@ function GuardrailStatusBanner({ status, accentColor, onProvision, provisioning 
 
 function CategoryRow({ cat }) {
   const filtered = cat.filtered
+  const detected = cat.detected && !filtered  // detected but not hard-blocked
   const sev = cat.severity || 'safe'
   const sevColor = SEV_COLORS[sev] || '#6b7280'
   const catColor = CATEGORY_COLORS[cat.category] || '#6b7280'
@@ -166,12 +189,17 @@ function CategoryRow({ cat }) {
     <div style={{
       display: 'flex', alignItems: 'center', gap: '0.6rem',
       padding: '0.4rem 0.6rem',
-      background: filtered ? 'rgba(239,68,68,0.06)' : 'var(--bg-elevated)',
-      border: `1px solid ${filtered ? 'rgba(239,68,68,0.25)' : 'var(--border)'}`,
+      background: filtered ? 'rgba(239,68,68,0.06)' : detected ? 'rgba(245,158,11,0.06)' : 'var(--bg-elevated)',
+      border: `1px solid ${filtered ? 'rgba(239,68,68,0.25)' : detected ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`,
       borderRadius: 4,
     }}>
       <div style={{ width: 7, height: 7, borderRadius: '50%', background: catColor, flexShrink: 0 }} />
       <span style={{ flex: 1, fontSize: '0.78rem', fontWeight: 500 }}>{cat.category}</span>
+      {detected && (
+        <span style={{ fontSize: '0.58rem', fontWeight: 700, padding: '0.08rem 0.35rem', borderRadius: 2, background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.35)', color: '#f59e0b' }}>
+          PS DETECTED
+        </span>
+      )}
       <span style={{ fontSize: '0.58rem', fontWeight: 600, padding: '0.08rem 0.3rem', borderRadius: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
         {cat.point === 'input' ? 'INPUT' : 'OUTPUT'}
       </span>
@@ -180,7 +208,9 @@ function CategoryRow({ cat }) {
       </span>
       {filtered
         ? <XCircle size={12} style={{ color: '#ef4444', flexShrink: 0 }} />
-        : <CheckCircle size={12} style={{ color: '#10b981', flexShrink: 0 }} />
+        : detected
+          ? <AlertTriangle size={12} style={{ color: '#f59e0b', flexShrink: 0 }} />
+          : <CheckCircle size={12} style={{ color: '#10b981', flexShrink: 0 }} />
       }
     </div>
   )
@@ -459,10 +489,11 @@ export default function FilterTestPage({
       const agList = Array.isArray(ag) ? ag : []
       setModels(depList)
       setAgents(agList)
-      // Only set a default targetId if the user hasn't already picked something
-      // (e.g. by selecting a scenario before this slow API call resolved).
-      // Use functional updater so we read the current value without a stale closure.
-      if (depList.length > 0) setTargetId(prev => prev || depList[0].id)
+      // Default to the cf-demo-* deployment that matches this filter type
+      if (depList.length > 0) {
+        const best = findPreferredDep(depList, filterType)
+        setTargetId(prev => prev || best.id)
+      }
       // If we're waiting in agent mode with no id yet, fill in the demo agent now
       setTargetType(prev => {
         if (prev === 'agent' && agList.length > 0) {
@@ -490,12 +521,16 @@ export default function FilterTestPage({
     setTargetType(pref)
     if (pref === 'agent') {
       // prefer the demo agent for this filter type
+      // Fall back to status?.agent?.name directly if agents list hasn't loaded yet —
+      // agent name == agent ID in the backend, so this is safe.
       const demoAgName = status?.agent?.name
       const demoAg = agents.find(a => a.name === demoAgName) || agents[0]
-      if (demoAg) setTargetId(demoAg.id)
+      setTargetId(demoAg?.id || demoAgName || '')
     } else {
-      const dep = s.deployment || (models[0]?.id)
-      if (dep) setTargetId(dep)
+      // Use the deployment the scenario targets, or fall back to this filter's cf-demo-* model
+      const dep = (s.deployment && models.find(d => d.id === s.deployment || d.name === s.deployment))
+        || findPreferredDep(models, filterType)
+      setTargetId(dep?.id || models[0]?.id || '')
     }
     setShowSys(true)
   }
@@ -513,11 +548,14 @@ export default function FilterTestPage({
         const data = await r.json()
         setResult(r.ok ? { ...data, _mode: 'model' } : { error: data.detail || `HTTP ${r.status}`, _mode: 'model' })
       } else {
+        // Resolve agent id: prefer matched agent in list, fall back to status?.agent?.name.
+        // This guards against targetId being a model deployment name when agents loaded late.
         const agent = agents.find(a => a.id === targetId)
+        const resolvedAgentId = agent?.id || (status?.agent?.name && targetId === status.agent.name ? targetId : null) || status?.agent?.name || targetId
         const r = await fetch('/api/content-filters/test/agent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent_id: targetId, agent_name: agent?.name || targetId, message, filter_type: filterType }),
+          body: JSON.stringify({ agent_id: resolvedAgentId, agent_name: agent?.name || resolvedAgentId, message, filter_type: filterType }),
         })
         const data = await r.json()
         setResult(r.ok ? { ...data, _mode: 'agent' } : { error: data.detail || `HTTP ${r.status}`, _mode: 'agent' })
@@ -656,11 +694,13 @@ export default function FilterTestPage({
                       onClick={() => {
                         setTargetType(opt.val)
                         setResult(null)
-                        if (opt.val === 'model' && models.length > 0) setTargetId(models[0].id)
-                        if (opt.val === 'agent' && agents.length > 0) {
+                        if (opt.val === 'model' && models.length > 0) {
+                          setTargetId(findPreferredDep(models, filterType).id)
+                        }
+                        if (opt.val === 'agent') {
                           const demoName = status?.agent?.name
                           const demoAg = agents.find(a => a.name === demoName) || agents[0]
-                          setTargetId(demoAg?.id || '')
+                          setTargetId(demoAg?.id || demoName || '')
                         }
                       }}
                       title={isLocked ? `This scenario is designed for ${lockedTo} testing` : undefined}
@@ -802,6 +842,12 @@ export default function FilterTestPage({
                 <AgentResult result={result} accentColor={color} />
               ) : (
                 <ModelResult result={result} accentColor={color} />
+              )}
+              {/* Raw API response */}
+              {result._raw_response && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  <RawJsonView data={result._raw_response} />
+                </div>
               )}
             </div>
           )}

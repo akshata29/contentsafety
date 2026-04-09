@@ -29,13 +29,19 @@ class Settings(BaseSettings):
     AZURE_OPENAI_API_KEY: str = Field(default="", alias="AZURE_OPENAI_API_KEY")
     AZURE_OPENAI_KEY: str = ""
     AZURE_OPENAI_DEPLOYMENT: str = "gpt-4o"
-    AZURE_OPENAI_API_VERSION: str = "2024-09-01-preview"
+    AZURE_OPENAI_API_VERSION: str = "2025-01-01-preview"
+    # API key for the Foundry project endpoint (cf-demo-* deployments)
+    AZURE_FOUNDRY_KEY: str = ""
 
     # Foundry project metadata
     AZURE_FOUNDRY_PROJECT_NAME: str = ""
     FOUNDRY_PROJECT_ENDPOINT: str = ""
     AZURE_FOUNDRY_RESOURCE_GROUP: str = ""
     AZURE_SUBSCRIPTION_ID: str = ""
+
+    # Azure Monitor / App Insights (for Filter Analytics)
+    # Log Analytics workspace ID linked to astaiappinsight
+    APPINSIGHTS_WORKSPACE_ID: str = ""
 
     # Entra ID
     AZURE_TENANT_ID: str = ""

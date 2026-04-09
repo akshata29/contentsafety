@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ShieldCheck, ClipboardList, AlertTriangle, RefreshCw, CheckCircle, XCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { ShieldCheck, ClipboardList, AlertTriangle, RefreshCw, CheckCircle, XCircle, ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react'
 
 const TABS = ['Policies', 'Assets', 'Guardrails', 'Security Posture']
 
@@ -75,43 +75,60 @@ function PolicyRow({ policy, onExpand, expanded }) {
 }
 
 function GuardrailsTab() {
-  const guardrails = [
-    { name: 'Prompt Injection Shield', status: 'active', coverage: 100, models: 8, desc: 'Blocks jailbreak and indirect prompt injection attacks on all trading AI assistants' },
-    { name: 'Content Harm Filter', status: 'active', coverage: 87, models: 7, desc: 'Filters hate, violence, sexual, and self-harm content from model I/O' },
-    { name: 'Groundedness Check', status: 'active', coverage: 62, models: 5, desc: 'Ensures AI-generated research reports are grounded in verified source data' },
-    { name: 'Protected Material Filter', status: 'active', coverage: 75, models: 6, desc: 'Prevents reproduction of copyrighted analyst reports and research' },
-    { name: 'Custom Financial Categories', status: 'active', coverage: 100, models: 8, desc: 'Detects market manipulation, insider trading, front-running language' },
-    { name: 'Task Adherence Check', status: 'partial', coverage: 50, models: 4, desc: 'Validates AI tool calls align with stated user intent in workflow agents' },
-    { name: 'Sanctions Blocklist', status: 'active', coverage: 100, models: 8, desc: 'Screens all inputs for sanctioned entities, restricted securities, and prohibited terms' },
-  ]
+  const [guardrails, setGuardrails] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/foundry/guardrail-stats')
+      .then(r => r.json())
+      .then(d => { setGuardrails(Array.isArray(d) ? d : []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  if (loading) return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+      <span className="spinner" style={{ marginRight: 8 }} /> Loading guardrail data...
+    </div>
+  )
+
+  if (guardrails.length === 0) return (
+    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+      No guardrail data available. Ensure App Insights is configured.
+    </div>
+  )
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
       {guardrails.map((g, i) => (
         <div key={i} style={{ padding: '0.75rem 1rem', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 6, display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-              <ShieldCheck size={13} color={g.status === 'active' ? '#10b981' : '#f59e0b'} />
+              <ShieldCheck size={13} color="#10b981" />
               <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>{g.name}</span>
-              <span className={`badge ${g.status === 'active' ? 'badge-safe' : 'badge-medium'}`} style={{ fontSize: '0.6rem' }}>{g.status}</span>
+              <span className="badge badge-safe" style={{ fontSize: '0.6rem' }}>{g.status}</span>
+              {g.block_count > 0 && (
+                <span className="badge badge-critical" style={{ fontSize: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                  <ShieldAlert size={9} /> {g.block_count} blocks (24h)
+                </span>
+              )}
             </div>
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>{g.desc}</div>
           </div>
-          <div style={{ minWidth: 140 }}>
+          <div style={{ minWidth: 150 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
-              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Coverage</span>
-              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: g.coverage >= 90 ? '#10b981' : g.coverage >= 60 ? '#f59e0b' : '#ef4444' }}>{g.coverage}%</span>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Active Agents</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: g.coverage >= 50 ? '#10b981' : g.coverage > 0 ? '#f59e0b' : 'var(--text-muted)' }}>{g.coverage}%</span>
             </div>
             <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${g.coverage}%`, background: g.coverage >= 90 ? '#10b981' : g.coverage >= 60 ? '#f59e0b' : '#ef4444' }} />
+              <div className="progress-fill" style={{ width: `${g.coverage}%`, background: g.coverage >= 50 ? '#10b981' : g.coverage > 0 ? '#f59e0b' : '#6b7280' }} />
             </div>
-            <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{g.models} of 8 models</div>
+            <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{g.agents_covered} of {g.total_agents} agents triggered</div>
           </div>
         </div>
       ))}
     </div>
   )
 }
-
 function SecurityPostureTab() {
   const dimensions = [
     { name: 'Identity & Access', score: 92, framework: 'Zero Trust', controls: 18 },

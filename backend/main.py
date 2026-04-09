@@ -13,31 +13,32 @@ from contextlib import asynccontextmanager
 import os
 
 from config import settings
-from routes import content_safety, foundry_control, demo_data, compliance_pipeline, content_filters
-from services.blocklist import provision_demo_blocklist
-from services.custom_categories import provision_demo_incidents
-from services.content_filters import provision_demo_guardrails_and_agents
+from routes import content_safety, foundry_control, demo_data, compliance_pipeline, content_filters, pattern_pipeline
+# Startup provisioning imports -- commented out; run setup.py once instead.
+# from services.blocklist import provision_demo_blocklist
+# from services.custom_categories import provision_demo_incidents
+# from services.content_filters import provision_demo_guardrails_and_agents
 
 
-async def _provision_cf_demo():
-    """Background task: provision CF-Demo-* guardrails and cf-demo-* agents.
-    Non-blocking - errors are logged but do not prevent server startup."""
-    try:
-        result = await provision_demo_guardrails_and_agents()
-        provisioned = result.get("provisioned", 0)
-        print(f"Content Filter demo resources: {provisioned} filter types checked/provisioned")
-    except Exception as exc:
-        print(f"Content Filter demo provisioning skipped: {exc}")
+# _provision_cf_demo -- commented out; run setup.py once instead.
+# async def _provision_cf_demo():
+#     """Background task: provision CF-Demo-* guardrails and cf-demo-* agents."""
+#     try:
+#         result = await provision_demo_guardrails_and_agents()
+#         provisioned = result.get("provisioned", 0)
+#         print(f"Content Filter demo resources: {provisioned} filter types checked/provisioned")
+#     except Exception as exc:
+#         print(f"Content Filter demo provisioning skipped: {exc}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Starting Capital Markets AI Safety Demo")
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, provision_demo_blocklist)
-    await loop.run_in_executor(None, provision_demo_incidents)
-    # Kick off CF demo provisioning as a fire-and-forget background task
-    asyncio.create_task(_provision_cf_demo())
+    # Startup provisioning -- commented out; run setup.py once instead.
+    # loop = asyncio.get_event_loop()
+    # await loop.run_in_executor(None, provision_demo_blocklist)
+    # await loop.run_in_executor(None, provision_demo_incidents)
+    # asyncio.create_task(_provision_cf_demo())
     yield
     print("Shutting down...")
 
@@ -62,6 +63,7 @@ app.add_middleware(
 # Routers
 app.include_router(content_safety.router, prefix="/api/content-safety", tags=["Content Safety"])
 app.include_router(compliance_pipeline.router, prefix="/api/compliance", tags=["Compliance Pipeline"])
+app.include_router(pattern_pipeline.router, prefix="/api/compliance", tags=["Pattern Pipeline"])
 app.include_router(foundry_control.router, prefix="/api/foundry", tags=["Foundry Control Plane"])
 app.include_router(content_filters.router, prefix="/api/content-filters", tags=["Content Filters"])
 app.include_router(demo_data.router, prefix="/api/demo", tags=["Demo Data"])

@@ -108,7 +108,12 @@ export default function ModelFilterTest() {
       setScenarios(Array.isArray(sc) ? sc : [])
       const deps = Array.isArray(dep) ? dep : []
       setDeployments(deps)
-      if (deps.length > 0 && !deployment) setDeployment(deps[0].id)
+      // Default to cf-demo-contentsafety as the primary demo deployment,
+      // falling back to the first available deployment
+      if (deps.length > 0 && !deployment) {
+        const preferred = deps.find(d => d.id === 'cf-demo-contentsafety') || deps[0]
+        setDeployment(preferred.id)
+      }
     }).catch(() => {})
   }, [])
 

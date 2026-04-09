@@ -19,6 +19,15 @@ async def foundry_overview():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/guardrail-stats")
+async def guardrail_stats():
+    """Per-guardrail block counts from App Insights (last 24 h)."""
+    try:
+        return await foundry_mgmt.get_guardrail_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # Agent Fleet Management
 # ---------------------------------------------------------------------------

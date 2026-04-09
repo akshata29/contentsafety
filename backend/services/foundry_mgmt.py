@@ -15,6 +15,7 @@ from typing import Optional
 
 import httpx
 from config import settings
+from services import content_filters as _cf_svc
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,18 @@ try:
 except ImportError:
     _AZURE_SDK_AVAILABLE = False
     _AIP_VERSION = "unavailable"
+
+# ---------------------------------------------------------------------------
+# Guardrail category → display metadata
+# ---------------------------------------------------------------------------
+_CATEGORY_TO_GUARDRAIL: dict = {
+    "Jailbreak":          {"name": "Prompt Injection Shield",    "desc": "Blocks jailbreak and prompt injection on trading AI assistants"},
+    "Indirect Attack":    {"name": "Indirect Prompt Injection",  "desc": "Detects cross-domain prompt injection via tool and document responses"},
+    "Content Safety":     {"name": "Content Harm Filter",        "desc": "Filters hate, violence, sexual and self-harm content from model I/O"},
+    "PII":                {"name": "PII Protection",             "desc": "Prevents exposure of SSN, account numbers and personally identifiable data"},
+    "Protected Material": {"name": "Protected Material Filter",  "desc": "Prevents reproduction of copyrighted analyst reports and research"},
+    "Task Adherence":     {"name": "Task Adherence Check",       "desc": "Validates AI tool calls align with stated user intent in workflow agents"},
+}
 
 # ---------------------------------------------------------------------------
 # Simple TTL cache
@@ -747,7 +760,7 @@ async def get_foundry_overview() -> dict:
 
     # Fire all data fetches in parallel
     (agents, deployments, quotas, policies, alerts,
-     hourly_requests, token_metrics, cost_today, activity_log) = await asyncio.gather(
+     hourly_requests, token_metrics, cost_today, activity_log, ai_safety_events) = await asyncio.gather(
         _safe(_real_agents()),
         _safe(_real_deployments(rg)) if rg else _empty(),
         _safe(_real_quotas(rg)) if rg else _empty(),
@@ -757,6 +770,7 @@ async def get_foundry_overview() -> dict:
         _safe(_real_token_metrics(ai_accounts), default={"total_tokens": 0, "total_requests": 0, "dep_tokens": {}}),
         _empty_float(),   # Cost Management disabled — was: _safe(_real_cost_today(), default=0.0)
         _safe(_real_activity_log()),
+        _safe(_cf_svc.query_appinsights_filter_events("1d"), default=[]),
     )
 
     # Normalise types in case _safe returned [] for dict/float coroutines
@@ -764,6 +778,37 @@ async def get_foundry_overview() -> dict:
         token_metrics = {"total_tokens": 0, "total_requests": 0, "dep_tokens": {}}
     if not isinstance(cost_today, (int, float)):
         cost_today = 0.0
+
+    # --- App Insights safety enrichment ---
+    from collections import Counter as _Counter
+    blocked_events = [e for e in (ai_safety_events or []) if e.get("action") == "Blocked"]
+    prevented_behaviors = len(blocked_events)
+
+    # Replace generic ARM Errors "blocked" column with real App Insights content-filter blocks
+    if blocked_events and isinstance(hourly_requests, list):
+        hour_blocks = _Counter(
+            e["ts"].strftime("%H:00") for e in blocked_events
+            if hasattr(e.get("ts"), "strftime")
+        )
+        for row in hourly_requests:
+            if row.get("time") in hour_blocks:
+                row["blocked"] = hour_blocks[row["time"]]
+
+    # Build recent activity from real App Insights blocked events (most recent first)
+    ai_activity = [
+        {
+            "timestamp": (
+                e["ts"].strftime("%Y-%m-%d %H:%M") if hasattr(e.get("ts"), "strftime")
+                else str(e.get("ts", ""))[:16]
+            ),
+            "event": f"Guardrail block - {e.get('category', 'Unknown')}",
+            "agent": (e.get("entity") or "")[:40],
+            "status": "blocked",
+        }
+        for e in sorted(blocked_events, key=lambda x: x.get("ts", datetime.min), reverse=True)[:10]
+    ]
+    arm_other = [ev for ev in (activity_log or []) if ev.get("status") != "blocked"]
+    activity_log = (ai_activity + arm_other)[:20]
 
     dep_tokens: dict = token_metrics.get("dep_tokens", {})
 
@@ -818,7 +863,7 @@ async def get_foundry_overview() -> dict:
         "at_risk_agents": sum(1 for a in agents if a.get("compliance_status") == "at-risk"),
         "critical_agents": sum(1 for a in agents if a.get("compliance_status") == "non_compliant"),
         "run_completion_rate": 1.0,
-        "prevented_behaviors": 0,
+        "prevented_behaviors": prevented_behaviors,
         "total_token_usage": token_metrics.get("total_tokens", 0),
         "top_models": top_models,
         "hourly_requests": hourly_requests,
@@ -828,6 +873,46 @@ async def get_foundry_overview() -> dict:
         "policies": policies, "security_alerts": alerts, "quotas": quotas,
     }
     _cache_set("overview", result)
+    return result
+
+
+async def get_guardrail_stats() -> list:
+    """Per-guardrail block counts from App Insights (last 24 h)."""
+    cached = _cache_get("guardrail_stats")
+    if cached is not None:
+        return cached
+
+    events = await _safe(_cf_svc.query_appinsights_filter_events("1d"), default=[])
+    blocked = [e for e in (events or []) if e.get("action") == "Blocked"]
+
+    from collections import Counter as _Ctr
+    cat_blocks: dict = dict(_Ctr(e.get("category", "Content Safety") for e in blocked))
+    cat_agents: dict = {}
+    for e in blocked:
+        cat = e.get("category", "Content Safety")
+        cat_agents.setdefault(cat, set()).add(e.get("entity") or "?")
+
+    all_entities = {(e.get("entity") or "?") for e in (events or [])}
+    total_agents = max(len(all_entities), 6)
+
+    result = []
+    for cat, meta in _CATEGORY_TO_GUARDRAIL.items():
+        count = cat_blocks.get(cat, 0)
+        agents_set = cat_agents.get(cat, set())
+        coverage = round(len(agents_set) / total_agents * 100)
+        result.append({
+            "name": meta["name"],
+            "category": cat,
+            "desc": meta["desc"],
+            "block_count": count,
+            "status": "active",
+            "agents_covered": len(agents_set),
+            "total_agents": total_agents,
+            "coverage": coverage,
+        })
+
+    result.sort(key=lambda x: (-x["block_count"], x["name"]))
+    _cache_set("guardrail_stats", result)
     return result
 
 

@@ -1,6 +1,7 @@
 azure-ai-contentsafety==1.0.0
 aiohttp>=3.9.0
 azure-identity==1.19.0
+azure-monitor-query>=1.4.0
 azure-mgmt-cognitiveservices==13.5.0
 azure-mgmt-resource==23.1.0
 azure-ai-projects==1.0.0b10

@@ -19,9 +19,13 @@ import SecurityAlerts from './components/FoundryControl/SecurityAlerts'
 import QuotaManagement from './components/FoundryControl/QuotaManagement'
 import AdminProjects from './components/FoundryControl/AdminProjects'
 import ArchitecturePage from './pages/ArchitecturePage'
+import WalkthroughIndex from './pages/walkthrough/WalkthroughIndex'
+import WalkthroughChapter from './pages/walkthrough/WalkthroughChapter'
 import WorkflowPage from './pages/WorkflowPage'
 import DemoPage from './pages/DemoPage'
 import SettingsPage from './pages/SettingsPage'
+import WhenToUsePage from './pages/WhenToUsePage'
+import PatternScenarios from './components/CompliancePipeline/PatternScenarios'
 import GuardrailManager from './components/ContentFilters/GuardrailManager'
 import JailbreakFilter from './components/ContentFilters/JailbreakFilter'
 import XPIAFilter from './components/ContentFilters/XPIAFilter'
@@ -42,6 +46,7 @@ export default function App() {
           <Route index element={<Navigate to="/pipeline" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="pipeline" element={<CompliancePipeline />} />
+          <Route path="pipeline/patterns" element={<PatternScenarios />} />
 
           {/* Content Safety */}
           <Route path="content-safety/text" element={<TextAnalysis />} />
@@ -76,11 +81,16 @@ export default function App() {
           <Route path="foundry/quota" element={<QuotaManagement />} />
           <Route path="foundry/admin" element={<AdminProjects />} />
 
+          {/* Demo Walkthrough */}
+          <Route path="walkthrough" element={<WalkthroughIndex />} />
+          <Route path="walkthrough/:n" element={<WalkthroughChapter />} />
+
           {/* Design / Artifacts */}
           <Route path="architecture" element={<ArchitecturePage />} />
           <Route path="workflow" element={<WorkflowPage />} />
           <Route path="demo" element={<DemoPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="when-to-use" element={<WhenToUsePage />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -6,7 +6,8 @@ import {
   AlertTriangle, Gauge, Settings, ChevronDown, ChevronRight,
   GitMerge, Shield, Layers, BarChart2, Cpu,
   ShieldAlert, FileWarning, AlertOctagon, GitBranch, EyeOff, Copyright,
-  Map, Play, Bot, Workflow,
+  Map, Play, Bot, Workflow, Scale,
+  BookMarked, BarChart, ArrowRight,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -17,6 +18,7 @@ const NAV_SECTIONS = [
     accent: '#6366f1',
     items: [
       { to: '/pipeline', icon: GitMerge, label: 'AI Compliance Pipeline', sub: 'All services · unified verdict' },
+      { to: '/pipeline/patterns', icon: GitBranch, label: 'Pattern Scenarios', sub: '5 patterns · capital markets' },
       { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', sub: 'Platform overview' },
     ],
   },
@@ -62,6 +64,7 @@ const NAV_SECTIONS = [
       { to: '/demo',         icon: Play,     label: 'Demo Playbook',    sub: 'Guided walkthrough' },
       { to: '/workflow',     icon: Workflow,  label: 'Workflow Diagrams', sub: 'Pipeline & filter flows' },
       { to: '/architecture', icon: Map,       label: 'Architecture',      sub: 'Component map' },
+      { to: '/when-to-use',  icon: Scale,     label: 'When to Use What',  sub: 'CS vs Filters guide' },
       { to: '/settings',     icon: Bot,       label: 'Agent Registry',    sub: 'System prompts & guardrails' },
     ],
   },
@@ -79,11 +82,30 @@ const NAV_SECTIONS = [
       { to: '/foundry/admin',        icon: Settings,       label: 'Admin',            sub: 'Projects & users' },
     ],
   },
+  /* HIDDEN: Demo Walkthrough section
+  {
+    id: 'walkthrough',
+    label: 'Demo Walkthrough',
+    accent: '#10b981',
+    items: [
+      { to: '/walkthrough',   icon: BookMarked,    label: 'Story Overview',       sub: '9-chapter narrative' },
+      { to: '/walkthrough/1', icon: Shield,        label: 'Ch1: Content Filters', sub: 'Guardrails & controls' },
+      { to: '/walkthrough/2', icon: ShieldCheck,   label: 'Ch2: Content Safety',  sub: '9 detection APIs' },
+      { to: '/walkthrough/3', icon: Globe,         label: 'Ch3: Control Plane',   sub: 'Fleet governance' },
+      { to: '/walkthrough/4', icon: BarChart2,     label: 'Ch4: Evaluation',      sub: 'Model risk evidence' },
+      { to: '/walkthrough/5', icon: Activity,      label: 'Ch5: Monitoring',      sub: 'Traces & alerts' },
+      { to: '/walkthrough/6', icon: GitMerge,      label: 'Ch6: Experimentation', sub: 'A/B filter comparison' },
+      { to: '/walkthrough/7', icon: Layers,        label: 'Ch7: Governance',      sub: 'Model & data controls' },
+      { to: '/walkthrough/8', icon: Fingerprint,   label: 'Ch8: Entra ID',        sub: 'Zero secrets access' },
+      { to: '/walkthrough/9', icon: AlertOctagon,  label: 'Ch9: Red Teaming',     sub: 'Adversarial testing' },
+    ],
+  },
+  */
 ]
 
 export default function Sidebar() {
   const location = useLocation()
-  const [collapsed, setCollapsed] = useState({ pipeline: false, cs: false, cf: false, design: false, foundry: false })
+  const [collapsed, setCollapsed] = useState({ pipeline: false, cs: false, cf: false, design: false, foundry: false, walkthrough: false })
 
   return (
     <nav style={{
