@@ -75,7 +75,7 @@ const PATTERNS = [
       + 'CF PII covers only model completions not app-assembled content; CF returns binary verdicts only.',
     flowSteps: [
       { label: 'User Input', type: 'start' },
-      { label: 'CS API: Prompt Shields + Text Analysis (numeric scores)', type: 'check' },
+      { label: 'CS API: Prompt Shields + Text Analysis + Custom Categories (numeric scores)', type: 'check' },
       { label: 'LLM w/ Content Filters (platform-enforced)', type: 'model' },
       { label: 'CS API: Groundedness + Protected Material (post-inference)', type: 'check' },
       { label: 'Audit log all scores; deliver response', type: 'outcome' },

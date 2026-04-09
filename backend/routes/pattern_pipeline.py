@@ -295,13 +295,17 @@ async def _defense_in_depth(req: PatternPipelineRequest) -> List[PatternServiceR
     """
     text = req.text
     tasks = [
-        ("Prompt Shields", 0, "Pre-Inference -- Jailbreak + Injection Shield", "pre"),
-        ("Text Analysis",  1, "Pre-Inference -- Harm Categories (numeric scores for MiFID II audit)", "pre"),
-        ("Protected Material", 4, "Post-Inference -- Copyright / IP Screen", "post"),
+        ("Prompt Shields",      0, "Pre-Inference -- Jailbreak + Injection Shield",                          "pre"),
+        ("Text Analysis",       1, "Pre-Inference -- Harm Categories (numeric scores for MiFID II audit)",   "pre"),
+        ("Insider Trading",     1, "Pre-Inference -- Financial Crime Custom Category",                        "pre"),
+        ("Market Manipulation", 1, "Pre-Inference -- Financial Crime Custom Category",                        "pre"),
+        ("Protected Material",  4, "Post-Inference -- Copyright / IP Screen",                                "post"),
     ]
     coros = [
         asyncio.to_thread(prompt_shields.analyze_prompt_shield, PromptShieldRequest(user_prompt=text)),
         asyncio.to_thread(text_analysis.analyze_text, TextAnalysisRequest(text=text)),
+        asyncio.to_thread(custom_categories.analyze_custom_category, CustomCategoryRequest(text=text[:1000], category_name="InsiderTrading")),
+        asyncio.to_thread(custom_categories.analyze_custom_category, CustomCategoryRequest(text=text[:1000], category_name="MarketManipulation")),
         asyncio.to_thread(protected_material.detect_protected_material, ProtectedMaterialRequest(text=text)),
     ]
 

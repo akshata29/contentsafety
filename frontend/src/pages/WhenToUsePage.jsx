@@ -274,10 +274,18 @@ const PATTERNS = [
     color: C_BLUE,
     summary: 'All external content passes through CS API before reaching the LLM or the vector store. Text Analysis catches harm categories (hate, violence, sexual, self-harm) with 0-6 severity scores. Prompt Shields detects both direct jailbreaks and document-embedded indirect attacks (XPIA) in uploaded files - a capability that covers all model vendors, not just Azure OpenAI. Image Analysis screens images up to 4 MB. Harmful content is blocked before it incurs inference cost or contaminates the knowledge base. Content Filters are not applicable here: they only operate on content flowing through an Azure OpenAI inference call and cannot screen documents or images before the model sees them.',
     flow: [
-      { label: 'User Input / Document Upload', type: 'start' },
-      { label: 'CS API: Text + Image Analysis + Prompt Shields', type: 'check' },
-      { label: 'Block if flagged; log severity scores', type: 'gate' },
-      { label: 'LLM Inference / Vector Indexing', type: 'model' },
+      { label: 'User Input / Document Upload', type: 'start',
+        why: 'Content enters the system — this is the only point where you can inspect raw bytes before the LLM or vector store ever sees them.',
+        whyNot: 'There is no CF alternative here: Content Filters only activate during an Azure OpenAI inference call and have no way to intercept a document upload or image file.' },
+      { label: 'CS API: Text + Image Analysis + Prompt Shields', type: 'check',
+        why: 'CS API is platform-agnostic — it works on any text, image, or document regardless of which model (or no model) processes it downstream. Prompt Shields (document mode) scans for adversarial instructions embedded in the file. Text Analysis produces numeric 0-6 severity scores you can log for audit evidence.',
+        whyNot: 'Content Filters cannot be invoked before an LLM call. Deploying a "dummy" model call just to trigger CF would add 1-3 seconds of latency and inference cost with no safety benefit over CS API.' },
+      { label: 'Block if flagged; log severity scores', type: 'gate',
+        why: 'Blocking here prevents a poisoned document from entering the vector store and silently corrupting every future RAG response that retrieves it. The severity score log is the audit trail.',
+        whyNot: 'CF only blocks content at the moment of an inference call — it cannot retroactively remove a poisoned chunk already in the index.' },
+      { label: 'LLM Inference / Vector Indexing', type: 'model',
+        why: 'Content has been cleared — safe to index into the vector store or send to the LLM. Inference cost is only incurred for content that passed all safety checks.',
+        whyNot: null },
     ],
     bestFor: ['Document ingestion pipelines', 'User-generated content platforms', 'Cost optimisation (reject before paying for inference)', 'RAG knowledge base protection - preventing vector store poisoning'],
     tradeoff: 'Adds latency to every input path; use async screening for batch ingestion. Known limitations: Custom Categories (standard) is English-only, max 3 categories per resource, can take hours to train. Image analysis supports JPEG/PNG/GIF/BMP/TIFF/WEBP up to 4 MB. Blocklist additions take up to 5 minutes to propagate - not suitable as a real-time incident response.',
@@ -293,11 +301,21 @@ const PATTERNS = [
     color: C_PURPLE,
     summary: 'CS API screens inputs pre-inference: Prompt Shields + Text Analysis reject jailbreaks and harmful content before the model sees the payload, saving inference cost and producing numeric 0-6 severity scores required for per-request audit evidence. Content Filters enforce safety at the model layer during inference: they are platform-enforced and cannot be bypassed by application code - a guarantee the app-layer CS API call alone cannot provide. CS API then post-processes outputs for three specific, docs-verified reasons: (1) CF Groundedness requires special document-embedding prompt markup and has region restrictions; CS API Groundedness works on any output text. (2) CF PII detection covers only model completions - not content your app assembles post-response from retriever results or tool outputs. (3) CF returns binary block/allow verdicts only; CS API returns numeric severity scores per category - the per-request quantified evidence MiFID II, HIPAA, and FINRA auditors require. An independent failure boundary also matters: Microsoft documents that when CF is unavailable, requests complete with HTTP 200 and no filtering applied. CS API as a separate service ensures safety cannot be silently skipped when the model-layer filter degrades.',
     flow: [
-      { label: 'User Input', type: 'start' },
-      { label: 'CS API: Prompt Shields + Text Analysis', type: 'check' },
-      { label: 'LLM w/ Content Filters (Hate, Violence, Jailbreak)', type: 'model' },
-      { label: 'CS API: Groundedness + PII + Protected Material', type: 'check' },
-      { label: 'Audit log all scores; deliver response', type: 'outcome' },
+      { label: 'User Input', type: 'start',
+        why: 'Input arrives at the application boundary — this is the correct place to produce per-request audit evidence before any inference cost is incurred.',
+        whyNot: null },
+      { label: 'CS API: Prompt Shields + Text Analysis + Custom Categories', type: 'check',
+        why: 'CS API returns numeric 0-6 severity scores per harm category — the per-request quantified evidence MiFID II, FINRA, and HIPAA auditors require. It also runs independently of the model layer, so it remains operational even when the Azure OpenAI Content Filter service degrades (documented: CF unavailability causes HTTP 200 with no filtering applied). Custom Categories catch financial crime signals (insider trading, market manipulation) that standard harm categories miss entirely.',
+        whyNot: 'CF returns binary block/allow verdicts with no per-category severity scores. A regulator asking "what was the violence score on this request?" cannot be answered from CF logs alone.' },
+      { label: 'LLM w/ Content Filters (Hate, Violence, Jailbreak)', type: 'model',
+        why: 'CF is platform-enforced — it fires synchronously during inference and cannot be bypassed by application code. This is the guarantee the app-layer CS API call alone cannot provide: even if a developer ships a bug that skips the CS API call, CF still runs.',
+        whyNot: 'CS API alone at the app layer can be inadvertently skipped if code paths diverge. CF is the second failure boundary that cannot be short-circuited.' },
+      { label: 'CS API: Groundedness + PII + Protected Material', type: 'check',
+        why: 'Post-inference CS API catches three things CF cannot: (1) Groundedness — CF groundedness requires special prompt markup and has region restrictions; CS API works on any output text. (2) PII — CF PII covers model completions only; CS API scans any text your app assembles post-retrieval. (3) Quantified output scores for the audit log alongside input scores.',
+        whyNot: 'CF post-inference checks exist but return binary decisions only — no entity-level PII detail, no grounding confidence score, no severity score for the audit trail.' },
+      { label: 'Audit log all scores; deliver response', type: 'outcome',
+        why: 'Per-request severity scores from both pre- and post-inference CS API calls form the documented evidence chain required by MiFID II Article 25 and FINRA Rule 3110.',
+        whyNot: null },
     ],
     bestFor: ['Financial services (MiFID II, FINRA) - regulations require per-request severity evidence, not just block/allow', 'Healthcare (HIPAA) - PII audit trail must be independent of the model layer', 'Legal and compliance workflows requiring documented separation of duties', 'Any application generating externally-distributed AI content subject to liability'],
     tradeoff: 'Two CS API round-trips plus inference - the highest latency of all five patterns. Profile end-to-end latency before adopting if SLA is under 2 seconds. Groundedness (CS API) is English-only and requires caller-supplied grounding sources. Content Filters require Azure OpenAI or AI Foundry - this pattern only works if your model layer is on those platforms.',
@@ -313,11 +331,21 @@ const PATTERNS = [
     color: C_CYAN,
     summary: 'An orchestration layer routes requests to the appropriate LLM (GPT-4o, Llama 3.1, Claude, etc.). CS API wraps every model call uniformly because it is platform-agnostic and works with any model or non-AI pipeline. Content Filters are Azure OpenAI and AI Foundry exclusive - they cannot be attached to Llama, Claude, Mistral, or any non-Azure-hosted model. For non-Azure hops, CS API is the only available safety mechanism. The pattern enables consistent Prompt Shields, harm detection, and output scoring regardless of which model handled the request - critical for enforcing a uniform safety policy when different teams or products use different models.',
     flow: [
-      { label: 'Orchestrator receives request', type: 'start' },
-      { label: 'CS API: Pre-screen input (all model paths)', type: 'check' },
-      { label: 'Route to model (Azure AOAI / Llama / Claude)', type: 'model' },
-      { label: 'Content Filters (Azure OpenAI/Foundry hops only)', type: 'gate' },
-      { label: 'CS API: Post-screen output (all model paths)', type: 'check' },
+      { label: 'Orchestrator receives request', type: 'start',
+        why: 'A single orchestration entry point is the right place to enforce a uniform safety policy — regardless of which downstream model handles the request.',
+        whyNot: null },
+      { label: 'CS API: Pre-screen input (all model paths)', type: 'check',
+        why: 'CS API is the only safety mechanism that works identically for Azure OpenAI, Llama 3, Claude, Mistral, and self-hosted models. Calling it once in the orchestrator prevents per-team safety policy drift when different teams use different models.',
+        whyNot: 'CF is Azure OpenAI and AI Foundry exclusive — it cannot be attached to Llama, Claude, Mistral, or any non-Azure-hosted deployment. Relying on CF alone means the Llama path has zero input screening.' },
+      { label: 'Route to model (Azure AOAI / Llama / Claude)', type: 'model',
+        why: 'The orchestrator routes to the appropriate model. Input has already been screened uniformly at step 1 regardless of which model is selected.',
+        whyNot: null },
+      { label: 'Content Filters (Azure OpenAI/Foundry hops only)', type: 'gate',
+        why: 'For Azure hops, CF provides a platform-enforced safety layer at no additional cost or latency — use it. It catches model-layer jailbreaks and harmful completions that the pre-screen may have missed.',
+        whyNot: 'For Llama, Claude, or Mistral hops, this step does not exist. CF cannot be purchased as an add-on for non-Azure models. The CS API post-screen (step 5) is the only available mechanism for those paths.' },
+      { label: 'CS API: Post-screen output (all model paths)', type: 'check',
+        why: 'Output screening in the orchestrator is the only way to apply consistent groundedness, PII, and copyright checks to responses from every model regardless of vendor. A response from Claude and a response from GPT-4o pass through the same post-screen.',
+        whyNot: 'CF post-inference checks only exist for Azure OpenAI/Foundry deployments. Llama and Claude responses would leave the system without any output safety check if CS API post-screen were dropped.' },
     ],
     bestFor: ['Multi-model architectures with Azure and non-Azure models', 'AI platforms serving multiple product teams using different models', 'Vendor diversification strategies where model can be swapped without changing the safety contract', 'Benchmarking / model evaluation pipelines needing consistent safety baselines'],
     tradeoff: 'CS API must be called twice per request (pre and post). Centralise these calls in the orchestrator to avoid per-team drift. Prompt Shields supports Chinese, English, French, German, Spanish, Italian, Japanese, and Portuguese with high quality; other languages are best-effort. CS API Groundedness is English-only - post-screening for factual accuracy is only available for English output across all model providers.',
@@ -333,13 +361,27 @@ const PATTERNS = [
     color: C_RED,
     summary: 'AI agents face three attack surfaces that simple chat does not. (1) User turn - direct jailbreak: Prompt Shields detects attempts to override the system prompt or manipulate the model persona before inference. CF Prompt Shields also catches these but only within the Azure OpenAI inference path. (2) Tool results and retrieved documents - XPIA (cross-prompt injection): Prompt Shields for Documents analyzes external content (emails, web pages, search results, database rows) for embedded adversarial instructions before injecting them into agent context. This is a CS API-only capability - Content Filters do not screen tool return values. (3) Agent-generated actions - misaligned tool use: Task Adherence (CS API, preview) detects when the agent plans to invoke a tool that does not match the user intent - e.g., calling change_data_plan() when the user asked to view their usage. Content Filters have no equivalent for action-level alignment checking.',
     flow: [
-      { label: 'User Turn', type: 'start' },
-      { label: 'CS API: Prompt Shields (direct jailbreak detection)', type: 'check' },
-      { label: 'Agent LLM with Content Filters', type: 'model' },
-      { label: 'Tool Result / Retrieved Document', type: 'start' },
-      { label: 'CS API: Prompt Shields (XPIA in tool results)', type: 'check' },
-      { label: 'CS API: Task Adherence (action in scope?)', type: 'gate' },
-      { label: 'CS API: Groundedness (output grounded?)', type: 'check' },
+      { label: 'User Turn', type: 'start',
+        why: 'The user message is the first attack surface. Screen it before the agent processes it — an undetected jailbreak here can compromise everything the agent does subsequently.',
+        whyNot: null },
+      { label: 'CS API: Prompt Shields (direct jailbreak detection)', type: 'check',
+        why: 'CS API Prompt Shields returns a structured detection result with confidence score that you can log and act on in application code. You can also apply it before the request reaches any model at all.',
+        whyNot: 'CF Prompt Shields (Jailbreak filter) also catches direct jailbreaks — but only at inference time, returns a binary block verdict, and cannot be called independently of the model invocation. Use CF as a second boundary here; CS API for the logged evidence.' },
+      { label: 'Agent LLM with Content Filters', type: 'model',
+        why: 'CF provides the platform-enforced safety floor during inference. Any harmful content the model attempts to produce is blocked at the platform layer regardless of application code.',
+        whyNot: 'CF does NOT screen what the tool returns or what the agent retrieves — only the model\'s own input and output. The next two steps address the surfaces CF cannot reach.' },
+      { label: 'Tool Result / Retrieved Document', type: 'start',
+        why: 'External content (web pages, emails, database rows, API responses) enters the agent context here. This is the XPIA injection surface — an attacker who controls external content can embed instructions to hijack the agent.',
+        whyNot: null },
+      { label: 'CS API: Prompt Shields (XPIA in tool results)', type: 'check',
+        why: 'Prompt Shields document mode scans retrieved content for embedded adversarial instructions before it is injected into the agent context. This is a CS API-only capability — CF has no equivalent and does not see tool return values.',
+        whyNot: 'Content Filters fire at the model\'s inference boundary. By the time the retrieved content has become part of the prompt context, CF cannot distinguish it from legitimate context. CS API screens the raw external content before it contaminates the prompt.' },
+      { label: 'CS API: Task Adherence (action in scope?)', type: 'gate',
+        why: 'Before an agent executes a consequential action (trade, email, data write), Task Adherence verifies the planned action was within the scope of what the user authorised. This prevents the agent from doing something harmful that was never requested.',
+        whyNot: 'No CF equivalent exists for action-level alignment. CF can block harmful text output but cannot evaluate whether a planned tool call is within scope of the user\'s stated intent. This check is only available via CS API.' },
+      { label: 'CS API: Groundedness (output grounded?)', type: 'check',
+        why: 'Agent responses synthesised from retrieved documents must be grounded in those sources. Groundedness detection catches hallucinated citations or claims before they reach the user.',
+        whyNot: 'CF Groundedness exists but requires special prompt engineering to embed the grounding document in the prompt context. CS API Groundedness is simpler to call post-inference on any text/source pair.' },
     ],
     bestFor: ['Autonomous agents with tool access', 'Email/calendar AI assistants', 'Web browsing agents', 'Code execution agents', 'Financial or medical agents with real-world consequences'],
     tradeoff: 'Task Adherence and Groundedness add meaningful latency. Task Adherence is in preview and data may be processed in US/EU regions regardless of your resource region - verify this against your data residency requirements before deploying in regulated environments. Groundedness is English-only. Cache grounding documents where possible and consider running post-action checks asynchronously for non-blocking flows.',
@@ -355,10 +397,18 @@ const PATTERNS = [
     color: C_GREEN,
     summary: 'Content Filters provide a zero-marginal-cost safety floor for all tenants - they are bundled into Azure OpenAI pricing, apply uniformly to every API caller, and cannot be bypassed by tenant code. Standard tenants get this floor automatically. Premium tenants are routed through CS API Custom Categories to enforce domain-specific policies and CS API PII Detection for data-sensitive scenarios. Regulated tenants add CS API Groundedness for RAG accuracy verification and full per-request audit logging with numeric severity scores. This tiered escalation makes safety economically viable at scale while delivering the compliance evidence that regulated tenants specifically require. Prerequisite: this pattern requires all tenant model traffic to flow through Azure OpenAI or AI Foundry - the Content Filter floor is not available for non-Azure model deployments.',
     flow: [
-      { label: 'All tenants: Content Filters (platform baseline)', type: 'gate' },
-      { label: 'Standard tier: filters only, proceed to response', type: 'outcome' },
-      { label: 'Premium tier: + CS API Custom Categories + PII', type: 'check' },
-      { label: 'Regulated tier: + CS API Groundedness + Audit log', type: 'check' },
+      { label: 'All tenants: Content Filters (platform baseline)', type: 'gate',
+        why: 'CF is bundled into Azure OpenAI pricing — no per-call cost, no code required, cannot be bypassed by tenant code. Every tenant gets this safety floor automatically. This is the right tool for the baseline because it has zero marginal cost and applies uniformly to every API caller.',
+        whyNot: 'Using CS API for the baseline tier would add per-call cost and latency for every tenant at every request. That economics does not scale. CF is the economically correct choice for the universal floor.' },
+      { label: 'Standard tier: filters only, proceed to response', type: 'outcome',
+        why: 'Standard tenants do not have domain-specific risk or regulatory audit requirements. CF is sufficient. No CS API cost is incurred for this tier.',
+        whyNot: null },
+      { label: 'Premium tier: + CS API Custom Categories + PII', type: 'check',
+        why: 'CF standard harm categories (hate, violence, sexual, self-harm) will not detect "market manipulation" or "front running" — those are domain-specific concepts that require a trained custom classifier. CS API Custom Categories provides that. PII detection via CS API returns entity-level detail (type, confidence, offset) that premium tenants need for data governance.',
+        whyNot: 'CF has no equivalent for custom domain categories. CF PII exists but returns a binary block with no entity detail — not sufficient for a PII audit log or redaction workflow.' },
+      { label: 'Regulated tier: + CS API Groundedness + Audit log', type: 'check',
+        why: 'Regulated tenants need per-request quantified evidence: numeric severity scores, PII entity counts, grounding confidence scores. Only CS API provides these. The audit log is built from CS API response payloads — CF verdicts alone cannot document compliance.',
+        whyNot: 'CF cannot produce the numeric severity scores per harm category that MiFID II, HIPAA, and FINRA auditors require. "Content was blocked" is not equivalent to "content scored 5/6 for violence at 14:32:07 UTC on request ID X".' },
     ],
     bestFor: ['Multi-tenant SaaS platforms on Azure OpenAI', 'Developer-facing AI APIs with compliance add-on tiers', 'Platforms with free and paid tiers needing cost-proportional safety depth', 'B2B platforms serving regulated and non-regulated industries simultaneously'],
     tradeoff: 'Tier routing logic must be carefully maintained and hardened. Ensure tenant classification cannot be spoofed to downgrade safety tier. Known limitations of CS API add-ons: Custom Categories (standard) is English-only, max 3 categories per resource, 5 RPS, and takes hours to train - not suitable for dynamic policy changes. Custom Categories (rapid) is faster and supports images but uses an LLM-based classifier with no training time guarantee. Groundedness is English-only. Plan for these constraints when defining what each paid tier promises.',
@@ -632,13 +682,51 @@ const FLOW_STYLES = {
 
 function FlowNode({ node, isLast }) {
   const s = FLOW_STYLES[node.type] || FLOW_STYLES.check
+  const [open, setOpen] = useState(false)
+  const hasRationale = node.why || node.whyNot
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div style={{
-        padding: '8px 16px', borderRadius: 8, border: `1px solid ${s.border}`,
-        background: s.bg, color: s.text, fontSize: 12, fontWeight: 500,
-        textAlign: 'center', width: '100%',
-      }}>{node.label}</div>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+      <div
+        onClick={() => hasRationale && setOpen(p => !p)}
+        style={{
+          padding: '8px 12px', borderRadius: 8, border: `1px solid ${open ? s.border : s.border}`,
+          background: open ? s.bg : s.bg, color: s.text, fontSize: 12, fontWeight: 500,
+          textAlign: 'center', width: '100%', boxSizing: 'border-box',
+          cursor: hasRationale ? 'pointer' : 'default',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+          outline: open ? `1px solid ${s.border}` : 'none',
+        }}
+      >
+        <span style={{ flex: 1, textAlign: 'center' }}>{node.label}</span>
+        {hasRationale && (
+          <span style={{ fontSize: 9, opacity: 0.6, flexShrink: 0 }}>{open ? '▲' : '▼'}</span>
+        )}
+      </div>
+      {open && (
+        <div style={{
+          width: '100%', boxSizing: 'border-box',
+          background: '#101725', border: `1px solid ${s.border}`,
+          borderTop: 'none', borderRadius: '0 0 8px 8px',
+          padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8,
+        }}>
+          {node.why && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#10b981', letterSpacing: '0.07em', marginBottom: 4 }}>
+                WHY THIS TOOL HERE
+              </div>
+              <div style={{ fontSize: 11, color: '#8fa3c0', lineHeight: 1.6 }}>{node.why}</div>
+            </div>
+          )}
+          {node.whyNot && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', letterSpacing: '0.07em', marginBottom: 4 }}>
+                WHY NOT THE OTHER ONE
+              </div>
+              <div style={{ fontSize: 11, color: '#8fa3c0', lineHeight: 1.6 }}>{node.whyNot}</div>
+            </div>
+          )}
+        </div>
+      )}
       {!isLast && (
         <div style={{ width: 2, height: 16, background: '#1e2d42', margin: '2px 0' }} />
       )}
@@ -943,8 +1031,11 @@ function PatternsTab() {
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#4d6480', letterSpacing: '0.05em', marginBottom: 10 }}>FLOW</div>
             {p.flow.map((node, i) => (
-              <FlowNode key={i} node={node} isLast={i === p.flow.length - 1} />
+              <FlowNode key={`${p.id}-${i}`} node={node} isLast={i === p.flow.length - 1} />
             ))}
+            <div style={{ marginTop: 8, fontSize: 10, color: '#4d6480', textAlign: 'center' }}>
+              Click any step to see why CS API or CF is used there
+            </div>
           </div>
 
           {/* Best for + tradeoff */}
