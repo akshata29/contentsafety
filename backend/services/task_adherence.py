@@ -93,4 +93,5 @@ def detect_task_adherence(req: TaskAdherenceRequest) -> TaskAdherenceResponse:
         violation_type=result.get("violationType"),
         details=result.get("details"),
         severity=result.get("severity"),
+        api_raw_response=data,
     )

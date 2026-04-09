@@ -844,7 +844,7 @@ export default function FilterTestPage({
                 <ModelResult result={result} accentColor={color} />
               )}
               {/* Raw API response */}
-              {result._raw_response && (
+              {'_raw_response' in result && (
                 <div style={{ marginTop: '0.75rem' }}>
                   <RawJsonView data={result._raw_response} />
                 </div>

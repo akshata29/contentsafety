@@ -27,12 +27,14 @@ import SettingsPage from './pages/SettingsPage'
 import WhenToUsePage from './pages/WhenToUsePage'
 import PatternScenarios from './components/CompliancePipeline/PatternScenarios'
 import GuardrailManager from './components/ContentFilters/GuardrailManager'
+import PromptShieldFilter from './components/ContentFilters/PromptShieldFilter'
 import JailbreakFilter from './components/ContentFilters/JailbreakFilter'
 import XPIAFilter from './components/ContentFilters/XPIAFilter'
 import ContentSafetyFilter from './components/ContentFilters/ContentSafetyFilter'
 import TaskAdherenceFilter from './components/ContentFilters/TaskAdherenceFilter'
 import PIIFilter from './components/ContentFilters/PIIFilter'
 import ProtectedMaterialFilter from './components/ContentFilters/ProtectedMaterialFilter'
+import GroundednessFilter from './components/ContentFilters/GroundednessFilter'
 import ModelFilterTest from './components/ContentFilters/ModelFilterTest'
 import AgentFilterTest from './components/ContentFilters/AgentFilterTest'
 import FilterComparison from './components/ContentFilters/FilterComparison'
@@ -61,12 +63,14 @@ export default function App() {
 
           {/* Content Filters */}
           <Route path="content-filters/guardrails"         element={<GuardrailManager />} />
+          <Route path="content-filters/prompt-shield"      element={<PromptShieldFilter />} />
           <Route path="content-filters/jailbreak"          element={<JailbreakFilter />} />
           <Route path="content-filters/xpia"               element={<XPIAFilter />} />
           <Route path="content-filters/content-safety"     element={<ContentSafetyFilter />} />
           <Route path="content-filters/task-adherence"     element={<TaskAdherenceFilter />} />
           <Route path="content-filters/pii-leakage"        element={<PIIFilter />} />
           <Route path="content-filters/protected-material" element={<ProtectedMaterialFilter />} />
+          <Route path="content-filters/groundedness"        element={<GroundednessFilter />} />
           <Route path="content-filters/model-test"         element={<ModelFilterTest />} />
           <Route path="content-filters/agent-test"         element={<AgentFilterTest />} />
           <Route path="content-filters/compare"            element={<FilterComparison />} />

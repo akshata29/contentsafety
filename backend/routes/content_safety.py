@@ -108,14 +108,17 @@ def prompt_shields_endpoint(req: PromptShieldRequest):
 # Groundedness Detection
 # ---------------------------------------------------------------------------
 
-@router.post("/groundedness", response_model=GroundednessResponse)
+@router.post("/groundedness")
 def groundedness_endpoint(req: GroundednessRequest):
     """
     Detect whether AI-generated financial reports/summaries are grounded
     in the provided source documents. Prevents hallucinations.
     """
     try:
-        return groundedness.detect_groundedness(req)
+        result = groundedness.detect_groundedness(req)
+        resp = result.model_dump(exclude={"api_raw_response"})
+        resp["_raw_response"] = result.api_raw_response
+        return resp
     except Exception as e:
         detail = str(e) or f"{type(e).__name__}"
         raise HTTPException(status_code=500, detail=detail)

@@ -91,6 +91,7 @@ class GroundednessResponse(BaseModel):
     contradicting_segments: List[Dict[str, Any]] = []
     confidence: float = 0.0
     reasoning: Optional[str] = None
+    api_raw_response: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +161,7 @@ class TaskAdherenceResponse(BaseModel):
     violation_type: Optional[str] = None
     details: Optional[str] = None
     severity: Optional[int] = None
+    api_raw_response: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +284,7 @@ class AgentFilterTestRequest(BaseModel):
     agent_name: str = ""
     message: str
     filter_type: str = ""
+    planned_tool_call: Optional[Dict[str, Any]] = None
 
 
 class AgentFilterTestResponse(BaseModel):

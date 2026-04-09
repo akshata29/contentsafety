@@ -55,5 +55,6 @@ def detect_groundedness(req: GroundednessRequest) -> GroundednessResponse:
         contradicting_segments=data.get("ungroundedDetails", []),
         confidence=data.get("ungroundedPercentage", 0.0),
         reasoning=data.get("reasoning"),
+        api_raw_response=data,
     )
 
