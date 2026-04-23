@@ -746,53 +746,30 @@ async def test_model_filter(
         #   - max_retries=3: application-level retries on 429/5xx/timeout
         def _sync_call():
             from openai import AzureOpenAI, DefaultHttpxClient, BadRequestError, PermissionDeniedError
-            if _is_foundry_dep:
-                # Foundry project deployments: use the plain OpenAI client pointed at
-                # the Foundry /openai/v1/ base and call the Responses API.
-                # AzureOpenAI appends its own versioned paths which the Foundry endpoint rejects.
-                from openai import OpenAI
-                oai_resp = OpenAI(
-                    base_url=_call_endpoint.rstrip("/") + "/openai/v1/",
-                    api_key=_foundry_api_key,
-                    max_retries=3,
-                    timeout=30.0,
-                    http_client=DefaultHttpxClient(
-                        transport=httpx.HTTPTransport(retries=3),
-                    ),
+            # Both cf-demo-* (Foundry / AI Services) and standard AOAI deployments
+            # use AzureOpenAI + chat.completions. _call_endpoint and api_key differ.
+            api_key  = _foundry_api_key if _is_foundry_dep else settings.effective_openai_key
+            oai = AzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=_call_endpoint,
+                api_version=settings.AZURE_OPENAI_API_VERSION,
+                max_retries=3,
+                timeout=30.0,
+                http_client=DefaultHttpxClient(
+                    transport=httpx.HTTPTransport(retries=3),
+                ),
+            )
+            try:
+                raw = oai.chat.completions.with_raw_response.create(
+                    model=deployment,
+                    messages=final_messages,
+                    max_tokens=600,
+                    temperature=0.7,
                 )
-                try:
-                    raw = oai_resp.responses.with_raw_response.create(
-                        model=deployment,
-                        instructions=final_messages[0]["content"] if final_messages and final_messages[0]["role"] == "system" else None,
-                        input=[m for m in final_messages if m["role"] != "system"],
-                        max_output_tokens=600,
-                    )
-                    return raw.status_code, raw.http_response.json()
-                except (BadRequestError, PermissionDeniedError) as exc:
-                    body = exc.body if isinstance(exc.body, dict) else {}
-                    return exc.status_code, body
-            else:
-                oai = AzureOpenAI(
-                    api_key=settings.effective_openai_key,
-                    azure_endpoint=_call_endpoint,
-                    api_version=settings.AZURE_OPENAI_API_VERSION,
-                    max_retries=3,
-                    timeout=30.0,
-                    http_client=DefaultHttpxClient(
-                        transport=httpx.HTTPTransport(retries=3),
-                    ),
-                )
-                try:
-                    raw = oai.chat.completions.with_raw_response.create(
-                        model=deployment,
-                        messages=final_messages,
-                        max_tokens=600,
-                        temperature=0.7,
-                    )
-                    return raw.status_code, raw.http_response.json()
-                except (BadRequestError, PermissionDeniedError) as exc:
-                    body = exc.body if isinstance(exc.body, dict) else {}
-                    return exc.status_code, body
+                return raw.status_code, raw.http_response.json()
+            except (BadRequestError, PermissionDeniedError) as exc:
+                body = exc.body if isinstance(exc.body, dict) else {}
+                return exc.status_code, body
 
         loop = asyncio.get_running_loop()
         status_code, data = await loop.run_in_executor(None, _sync_call)
@@ -800,11 +777,7 @@ async def test_model_filter(
         if status_code in (400, 403) and _is_content_filter_error(data):
             result = _parse_filter_error(data, deployment, filter_type)
         elif status_code == 200:
-            # Responses API returns "output" array; chat completions returns "choices"
-            if _is_foundry_dep and "output" in data:
-                result = _parse_filter_success_responses(data, deployment)
-            else:
-                result = _parse_filter_success(data, deployment)
+            result = _parse_filter_success(data, deployment)
         else:
             raise ValueError(f"API {status_code}: {str(data)[:300]}")
 

@@ -83,6 +83,26 @@ async def health():
     }
 
 
+# ---------------------------------------------------------------------------
+# Serve React frontend (production container build only).
+# The Dockerfile copies the Vite dist output to backend/static/.
+# This block is skipped entirely during local dev (no static/ dir present).
+# ---------------------------------------------------------------------------
+_frontend_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_frontend_dir):
+    from fastapi.responses import FileResponse as _FileResponse
+
+    # Serve hashed asset bundles (JS/CSS) from the /assets path
+    _assets_dir = os.path.join(_frontend_dir, "assets")
+    if os.path.isdir(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="frontend-assets")
+
+    # Catch-all: return index.html for every other path so React Router works
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        return _FileResponse(os.path.join(_frontend_dir, "index.html"))
+
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",

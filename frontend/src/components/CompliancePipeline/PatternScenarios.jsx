@@ -76,7 +76,7 @@ const PATTERNS = [
     flowSteps: [
       { label: 'User Input', type: 'start' },
       { label: 'CS API: Prompt Shields + Text Analysis + Custom Categories (numeric scores)', type: 'check' },
-      { label: 'LLM w/ Content Filters (platform-enforced)', type: 'model' },
+      { label: 'LLM w/ Content Filters (CF-Demo-ContentSafety: Hate / Violence / Sexual / Self-Harm)', type: 'model' },
       { label: 'CS API: Groundedness + Protected Material (post-inference)', type: 'check' },
       { label: 'Audit log all scores; deliver response', type: 'outcome' },
     ],
@@ -164,7 +164,7 @@ const PATTERNS = [
     flowSteps: [
       { label: 'User Turn', type: 'start' },
       { label: 'CS API: Prompt Shields (direct jailbreak)', type: 'check' },
-      { label: 'Agent LLM with Content Filters', type: 'model' },
+      { label: 'Agent w/ CF-Demo-Prompt-Shield (Jailbreak + XPIA blocked at inference)', type: 'model' },
       { label: 'Tool Result / Retrieved Document', type: 'start' },
       { label: 'CS API: Prompt Shields (XPIA in tool results)', type: 'check' },
       { label: 'CS API: Task Adherence (action in scope?)', type: 'gate' },

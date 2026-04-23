@@ -38,6 +38,7 @@ from services import (
 )
 from services.pii_detection import detect_pii
 from services.task_adherence import detect_task_adherence
+from services.content_filters import test_model_filter, test_agent_filter
 
 router = APIRouter()
 
@@ -120,6 +121,128 @@ def _skipped(service: str, step_name: str, step_index: int, reason: str) -> Patt
         detail=reason,
         latency_ms=0,
     )
+
+
+async def _call_cf_model(
+    deployment: str,
+    text: str,
+    filter_type: str,
+    step_name: str,
+    step_index: int,
+    step_type: str,
+    system_prompt: str = "",
+) -> PatternServiceResult:
+    """Make a real Content Filter call against a CF-attached Foundry deployment.
+    The guardrail attached to the deployment fires automatically during inference --
+    this is the platform-enforced block that application code cannot bypass."""
+    t0 = time.monotonic()
+    try:
+        result = await test_model_filter(
+            deployment=deployment,
+            messages=[{"role": "user", "content": text}],
+            system_prompt=system_prompt,
+            filter_type=filter_type,
+        )
+        ms = int((time.monotonic() - t0) * 1000)
+        blocked = result.get("blocked", False)
+        cats = result.get("filter_categories", [])
+        filtered_cats = [c for c in cats if c.get("filtered")]
+        if blocked:
+            block_reason = result.get("block_reason", "")
+            if filtered_cats:
+                cat_names = ", ".join(c["category"] for c in filtered_cats)
+                detail = f"BLOCKED by Content Filters -- {cat_names}"
+            else:
+                detail = block_reason or f"Content blocked on {deployment}"
+        else:
+            cat_count = len(cats)
+            detail = (
+                f"Content Filters cleared on {deployment}"
+                + (f" ({cat_count} categories, all below threshold)" if cat_count else "")
+            )
+        return PatternServiceResult(
+            service="Content Filters",
+            flow_step=step_name,
+            flow_step_index=step_index,
+            flow_step_type=step_type,
+            ran=True,
+            flagged=blocked,
+            verdict="FLAGGED" if blocked else "CLEAN",
+            detail=detail,
+            latency_ms=ms,
+            raw={"deployment": deployment, "blocked": blocked, "filter_categories": cats},
+        )
+    except Exception as exc:
+        ms = int((time.monotonic() - t0) * 1000)
+        return PatternServiceResult(
+            service="Content Filters",
+            flow_step=step_name,
+            flow_step_index=step_index,
+            flow_step_type=step_type,
+            ran=False,
+            flagged=False,
+            verdict="ERROR",
+            detail=f"CF call failed: {exc}",
+            latency_ms=ms,
+        )
+
+
+async def _call_cf_agent(
+    agent_id: str,
+    text: str,
+    filter_type: str,
+    step_name: str,
+    step_index: int,
+    step_type: str,
+) -> PatternServiceResult:
+    """Invoke a CF-guardrailed Foundry agent so the attached guardrail fires for real.
+    Uses test_agent_filter which calls the Responses API with agent_reference so the
+    Foundry-attached CF guardrail (e.g. CF-Demo-Prompt-Shield) is enforced."""
+    t0 = time.monotonic()
+    try:
+        result = await test_agent_filter(
+            agent_id=agent_id,
+            message=text,
+            filter_type=filter_type,
+        )
+        ms = int((time.monotonic() - t0) * 1000)
+        blocked = result.get("guardrail_triggered", False)
+        cats = result.get("filter_categories", [])
+        filtered_cats = [c for c in cats if c.get("filtered")]
+        if blocked:
+            if filtered_cats:
+                cat_names = ", ".join(c["category"] for c in filtered_cats)
+                detail = f"BLOCKED by Content Filters ({agent_id}) -- {cat_names}"
+            else:
+                events = result.get("filter_events", [])
+                detail = events[0].get("message", f"Guardrail triggered on {agent_id}") if events else f"Guardrail triggered on {agent_id}"
+        else:
+            detail = f"Content Filters cleared on agent {agent_id} ({len(cats)} categories checked)"
+        return PatternServiceResult(
+            service="Content Filters",
+            flow_step=step_name,
+            flow_step_index=step_index,
+            flow_step_type=step_type,
+            ran=True,
+            flagged=blocked,
+            verdict="FLAGGED" if blocked else "CLEAN",
+            detail=detail,
+            latency_ms=ms,
+            raw={"agent_id": agent_id, "guardrail_triggered": blocked, "filter_categories": cats},
+        )
+    except Exception as exc:
+        ms = int((time.monotonic() - t0) * 1000)
+        return PatternServiceResult(
+            service="Content Filters",
+            flow_step=step_name,
+            flow_step_index=step_index,
+            flow_step_type=step_type,
+            ran=False,
+            flagged=False,
+            verdict="ERROR",
+            detail=f"CF agent call failed: {exc}",
+            latency_ms=ms,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -318,13 +441,10 @@ async def _defense_in_depth(req: PatternPipelineRequest) -> List[PatternServiceR
     raw = await asyncio.gather(*[_run(c) for c in coros])
     checks = [_parse_cs(svc, idx, step, stype, r, ms, err) for (svc, idx, step, stype), (r, ms, err) in zip(tasks, raw)]
 
-    checks.append(_cf_platform(
-        "Model-Layer Enforcement -- Azure OpenAI Content Filters",
-        2,
-        "Platform-enforced by Azure OpenAI. Cannot be bypassed by application code. "
-        "Fires synchronously during inference with no additional network round-trip. "
-        "Failure mode (documented): when CF is unavailable, requests complete with HTTP 200 and no filtering -- "
-        "the independent CS API call is the second failure boundary that prevents silent bypass.",
+    checks.append(await _call_cf_model(
+        "cf-demo-contentsafety", text, "content_safety",
+        "LLM w/ Content Filters -- Hate / Violence / Sexual / Self-Harm (CF-Demo-ContentSafety)",
+        2, "model",
     ))
     if not req.grounding_source:
         checks.append(_skipped("Groundedness", "Post-Inference -- Hallucination Detection", 3,
@@ -368,13 +488,26 @@ async def _multi_provider_safety(req: PatternPipelineRequest) -> List[PatternSer
     raw = await asyncio.gather(*[_run(c) for c in coros])
     checks = [_parse_cs(svc, idx, step, stype, r, ms, err) for (svc, idx, step, stype), (r, ms, err) in zip(tasks, raw)]
 
-    checks.append(_cf_platform(
-        "Azure OpenAI / Foundry Hops Only -- Content Filters",
+    checks.append(await _call_cf_model(
+        "cf-demo-contentsafety", text, "content_safety",
+        "Azure OpenAI Hop -- Content Filters Active (CF-Demo-ContentSafety)",
+        3, "gate",
+    ))
+    checks.append(_skipped(
+        "Content Filters",
+        "Llama 3 Hop -- No CF Available (non-Azure model)",
         3,
-        "Content Filters only attach to Azure OpenAI and AI Foundry model deployments. "
-        "For Llama 3, Claude, Mistral, or any self-hosted model in this orchestration, "
-        "this step does not exist -- CS API pre/post screening is the only available mechanism. "
-        "This is the core architectural reason CS API is used here rather than relying on CF alone.",
+        "Content Filters are Azure OpenAI and AI Foundry exclusive. "
+        "Llama 3 has no platform-enforced filter -- CS API pre/post screening is the "
+        "only safety mechanism on this model path.",
+    ))
+    checks.append(_skipped(
+        "Content Filters",
+        "Claude Hop -- No CF Available (non-Azure model)",
+        3,
+        "Content Filters are Azure OpenAI and AI Foundry exclusive. "
+        "Non-Azure model paths exit the system without any platform-level filter -- "
+        "this is the architectural reason CS API wraps every model hop regardless of provider.",
     ))
     if not req.grounding_source:
         checks.append(_skipped("Groundedness", "Post-Screen All Models -- Hallucination Detection", 4,
@@ -395,27 +528,35 @@ async def _agent_safety(req: PatternPipelineRequest) -> List[PatternServiceResul
     text = req.text
     doc = req.document_text or ""
 
+    # flow_step_index maps to PatternScenarios.jsx flowSteps:
+    # 0 = 'User Turn' (start)
+    # 1 = 'CS API: Prompt Shields (direct jailbreak)'
+    # 2 = 'Agent LLM with Content Filters'
+    # 3 = 'Tool Result / Retrieved Document' (start)
+    # 4 = 'CS API: Prompt Shields (XPIA in tool results)'
+    # 5 = 'CS API: Task Adherence'
+    # 6 = 'CS API: Groundedness'
     tasks = [
-        ("Prompt Shields (User Turn)", 0, "User Turn -- Direct Jailbreak Detection", "pre"),
+        ("Prompt Shields (User Turn)", 1, "User Turn -- Direct Jailbreak Detection (CS API)", "pre"),
     ]
     coros = [
         asyncio.to_thread(prompt_shields.analyze_prompt_shield, PromptShieldRequest(user_prompt=text)),
     ]
 
     if doc:
-        tasks.append(("Prompt Shields (Tool Result)", 2, "Tool Result / Retrieved Doc -- XPIA Detection", "gate"))
+        tasks.append(("Prompt Shields (Tool Result)", 4, "Tool Result / Retrieved Doc -- XPIA Detection (CS API)", "gate"))
         coros.append(asyncio.to_thread(prompt_shields.analyze_prompt_shield,
                                        PromptShieldRequest(user_prompt="", documents=[doc[:4096]])))
 
     if req.tool_calls:
         conversation = [{"role": "user", "content": text}]
-        tasks.append(("Task Adherence", 3, "Agent Action Gate -- Scope Alignment Check", "gate"))
+        tasks.append(("Task Adherence", 5, "Agent Action Gate -- Scope Alignment Check (CS API)", "gate"))
         coros.append(asyncio.to_thread(detect_task_adherence, TaskAdherenceRequest(
             conversation=conversation, tool_calls=req.tool_calls,
         )))
 
     if req.grounding_source:
-        tasks.append(("Groundedness", 4, "Final Output -- Hallucination Detection", "post"))
+        tasks.append(("Groundedness", 6, "Final Output -- Hallucination Detection (CS API)", "post"))
         coros.append(asyncio.to_thread(groundedness.detect_groundedness, GroundednessRequest(
             text=text, grounding_sources=req.grounding_source, query=req.query or "", reasoning=True,
         )))
@@ -428,24 +569,24 @@ async def _agent_safety(req: PatternPipelineRequest) -> List[PatternServiceResul
         else:
             checks.append(_parse_cs(svc, idx, step, stype, r, ms, err))
 
-    checks.append(_cf_platform(
-        "Agent LLM Backbone -- Content Filters",
-        1,
-        "Platform-enforced at the LLM backbone: blocks harmful content the model produces. "
-        "Does NOT screen tool return values or retrieved documents before they enter agent context -- "
-        "that gap is covered by Prompt Shields for Documents (CS API, Step 2, XPIA detection). "
-        "Task Adherence (CS API, Step 3) has no CF equivalent for action-level alignment.",
+    # CF agent call: index 2 = 'Agent LLM with Content Filters' visual step
+    # cf-demo-markets-assistant has CF-Demo-Prompt-Shield: blocks Jailbreak on UserInput
+    # and IndirectAttack (XPIA) on ToolResponse -- the right guardrail for an agent pattern
+    checks.append(await _call_cf_agent(
+        "cf-demo-markets-assistant", text, "prompt_shield",
+        "Agent LLM w/ CF-Demo-Prompt-Shield (Jailbreak + XPIA blocked at inference)",
+        2, "model",
     ))
 
     if not doc:
         checks.append(_skipped("Prompt Shields (Tool Result)",
-                               "Tool Result / Retrieved Doc -- XPIA Detection", 2,
+                               "Tool Result / Retrieved Doc -- XPIA Detection (CS API)", 4,
                                "Provide document_text (retrieved email, search result, web page) to simulate XPIA."))
     if not req.tool_calls:
-        checks.append(_skipped("Task Adherence", "Agent Action Gate -- Scope Alignment Check", 3,
+        checks.append(_skipped("Task Adherence", "Agent Action Gate -- Scope Alignment Check (CS API)", 5,
                                "Provide tool_calls (planned agent actions) to run action alignment check."))
     if not req.grounding_source:
-        checks.append(_skipped("Groundedness", "Final Output -- Hallucination Detection", 4,
+        checks.append(_skipped("Groundedness", "Final Output -- Hallucination Detection (CS API)", 6,
                                "Add a grounding source to enable final output hallucination detection."))
 
     checks.sort(key=lambda c: c.flow_step_index)
@@ -494,15 +635,12 @@ async def _tiered_safety(req: PatternPipelineRequest) -> List[PatternServiceResu
             checks.append(_parse_cs(svc, idx, step, stype, r, ms, err))
 
     # CF baseline (always present -- platform layer)
-    checks.insert(0, _cf_platform(
-        "All Tenants -- Content Filters Baseline (Platform Layer)",
-        0,
-        "Zero-marginal-cost safety floor bundled with Azure OpenAI pricing. "
-        "Platform-enforced and cannot be bypassed by tenant code. "
-        "Applies uniformly to every API caller. "
-        "Prerequisite: all tenant traffic must route through Azure OpenAI or AI Foundry -- "
-        "the CF floor is not available for non-Azure model deployments.",
-    ))
+    cf_check = await _call_cf_model(
+        "cf-demo-contentsafety", text, "content_safety",
+        "All Tenants -- Content Filters Baseline (CF-Demo-ContentSafety)",
+        0, "gate",
+    )
+    checks.insert(0, cf_check)
 
     if not is_premium:
         checks += [
@@ -532,6 +670,7 @@ _WEIGHTS = {
     "Prompt Shields":                20,
     "Prompt Shields XPIA":           20,
     "Task Adherence":                20,
+    "Content Filters":               20,
     "Market Manipulation":           20,
     "Insider Trading":               20,
     "Front Running":                 15,
